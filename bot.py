@@ -12,14 +12,19 @@ from telegram.ext import (
     ContextTypes
 )
 
-# ================== TOKEN ==================
+# ================== TOKEN (Render ENV) ==================
 TOKEN = os.environ.get("TOKEN")
 
 if not TOKEN:
-    print("ERROR: TOKEN not found in environment variables")
-    TOKEN = "TEST"  # чтобы не падал при локальном запуске
+    raise Exception("TOKEN not found in Environment Variables")
 
-# ================== INIT DB ==================
+# ================== ADMIN ACCESS ==================
+ADMINS = [8676281750]  # 👈 ВСТАВЬ СЮДА СВОЙ ID
+
+def can_access(user_id):
+    return user_id in ADMINS
+
+# ================== DATABASE ==================
 def init_db():
     conn = sqlite3.connect("nakladnye.db")
     cursor = conn.cursor()
@@ -33,15 +38,6 @@ def init_db():
         tons REAL,
         invoice_number TEXT,
         object_name TEXT
-    )
-    """)
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        action TEXT,
-        time TEXT
     )
     """)
 
@@ -59,59 +55,24 @@ menu = ReplyKeyboardMarkup([
     ["📁 Excel"]
 ], resize_keyboard=True)
 
-# ================== DB ==================
-def add_invoice(data):
-    conn = sqlite3.connect("nakladnye.db")
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO invoices (date, driver, car_number, tons, invoice_number, object_name)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        data["date"],
-        data["driver"],
-        data["car"],
-        data["tons"],
-        data["invoice"],
-        data["object"]
-    ))
-
-    conn.commit()
-    conn.close()
-
-
-def get_report():
-    conn = sqlite3.connect("nakladnye.db")
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT object_name, SUM(tons)
-        FROM invoices
-        GROUP BY object_name
-    """)
-
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
-
-
-def log_action(user_id, action):
-    conn = sqlite3.connect("nakladnye.db")
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO logs (user_id, action, time)
-        VALUES (?, ?, datetime('now'))
-    """, (user_id, action))
-
-    conn.commit()
-    conn.close()
-
-# ================== HANDLERS ==================
+# ================== START ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🏭 DISPATCH SYSTEM", reply_markup=menu)
+    user_id = update.effective_user.id
 
+    # 🔥 временно показываем ID (можешь убрать потом)
+    await update.message.reply_text(f"Your ID: {user_id}")
+
+    if not can_access(user_id):
+        await update.message.reply_text("⛔ Нет доступа")
+        return
+
+    await update.message.reply_text("🏭 Система накладных активна", reply_markup=menu)
+
+# ================== ADD FLOW ==================
 async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not can_access(update.effective_user.id):
+        return
+
     await update.message.reply_text("📅 Дата:")
     return DATE
 
@@ -148,23 +109,54 @@ async def invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def object_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["object"] = update.message.text
 
-    add_invoice(context.user_data)
-    log_action(update.effective_user.id, "ADD INVOICE")
+    data = context.user_data
+
+    conn = sqlite3.connect("nakladnye.db")
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO invoices (date, driver, car_number, tons, invoice_number, object_name)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        data["date"],
+        data["driver"],
+        data["car"],
+        data["tons"],
+        data["invoice"],
+        data["object"]
+    ))
+
+    conn.commit()
+    conn.close()
 
     await update.message.reply_text("✅ Сохранено", reply_markup=menu)
     return ConversationHandler.END
 
+# ================== REPORT ==================
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = get_report()
+    conn = sqlite3.connect("nakladnye.db")
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT object_name, SUM(tons)
+        FROM invoices
+        GROUP BY object_name
+    """)
+
+    rows = cursor.fetchall()
+    conn.close()
 
     text = "📊 ОТЧЁТ:\n\n"
+
     for obj, tons in rows:
         text += f"🏗 {obj}: {tons} тонн\n"
 
     await update.message.reply_text(text)
 
+# ================== EXCEL ==================
 async def excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect("nakladnye.db")
+
     df = pd.read_sql_query("SELECT * FROM invoices", conn)
 
     file = "report.xlsx"
@@ -196,7 +188,8 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^📊 Отчёт$"), report))
     app.add_handler(MessageHandler(filters.Regex("^📁 Excel$"), excel))
 
-    print("BOT STARTED")
+    print("🚛 BOT STARTED")
+
     app.run_polling()
 
 if __name__ == "__main__":
