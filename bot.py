@@ -13,9 +13,13 @@ from telegram.ext import (
 )
 
 # ================== TOKEN ==================
-TOKEN = "8658556905:AAEQfrHltU9yCFE2b45jmmHXjB61enYwGvY"
+TOKEN = os.environ.get("TOKEN")
 
-# ================== DB INIT ==================
+if not TOKEN:
+    print("ERROR: TOKEN not found in environment variables")
+    TOKEN = "TEST"  # чтобы не падал при локальном запуске
+
+# ================== INIT DB ==================
 def init_db():
     conn = sqlite3.connect("nakladnye.db")
     cursor = conn.cursor()
@@ -55,7 +59,7 @@ menu = ReplyKeyboardMarkup([
     ["📁 Excel"]
 ], resize_keyboard=True)
 
-# ================== DB FUNCTIONS ==================
+# ================== DB ==================
 def add_invoice(data):
     conn = sqlite3.connect("nakladnye.db")
     cursor = conn.cursor()
@@ -103,16 +107,12 @@ def log_action(user_id, action):
     conn.commit()
     conn.close()
 
-# ================== START ==================
+# ================== HANDLERS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🏭 ENTERPRISE DISPATCH SYSTEM\n\nВыберите действие:",
-        reply_markup=menu
-    )
+    await update.message.reply_text("🏭 DISPATCH SYSTEM", reply_markup=menu)
 
-# ================== ADD FLOW ==================
 async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📅 Введите дату:")
+    await update.message.reply_text("📅 Дата:")
     return DATE
 
 async def date(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,7 +122,7 @@ async def date(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def driver(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["driver"] = update.message.text
-    await update.message.reply_text("🚗 Номер машины:")
+    await update.message.reply_text("🚗 Машина:")
     return CAR
 
 async def car(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -134,10 +134,10 @@ async def tons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         context.user_data["tons"] = float(update.message.text)
     except:
-        await update.message.reply_text("⚠️ Введите число")
+        await update.message.reply_text("Введите число")
         return TONS
 
-    await update.message.reply_text("🧾 Номер накладной:")
+    await update.message.reply_text("🧾 Накладная:")
     return INVOICE
 
 async def invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -154,21 +154,17 @@ async def object_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Сохранено", reply_markup=menu)
     return ConversationHandler.END
 
-# ================== REPORT ==================
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = get_report()
 
-    text = "📊 ОТЧЁТ ПО ОБЪЕКТАМ:\n\n"
-
+    text = "📊 ОТЧЁТ:\n\n"
     for obj, tons in rows:
         text += f"🏗 {obj}: {tons} тонн\n"
 
     await update.message.reply_text(text)
 
-# ================== EXCEL ==================
 async def excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect("nakladnye.db")
-
     df = pd.read_sql_query("SELECT * FROM invoices", conn)
 
     file = "report.xlsx"
@@ -200,17 +196,8 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^📊 Отчёт$"), report))
     app.add_handler(MessageHandler(filters.Regex("^📁 Excel$"), excel))
 
-    print("🏭 CLOUD ENTERPRISE BOT RUNNING")
-
-    # ================== CLOUD MODE ==================
-    PORT = int(os.environ.get("PORT", 10000))
-
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,
-        webhook_url=f"https://YOUR-APP.onrender.com/{TOKEN}"
-    )
+    print("BOT STARTED")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
